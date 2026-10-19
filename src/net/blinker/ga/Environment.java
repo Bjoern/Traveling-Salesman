@@ -32,6 +32,15 @@ public class Environment {
 	public final static int RANDOM_SEED = 1234;
 	
 	public final static int POPULATION_SIZE = 500;//must be even number
+
+	/** extra bits per allele, to reduce the bias of "allele % n" */
+	public final static int EXTRA_BITS = 2;
+
+	/** number of genes drawn for each tournament when picking a parent */
+	public final static int TOURNAMENT_SIZE = 3;
+
+	/** probability that an offspring is made by crossover rather than copying one parent */
+	public double crossoverRate = 1.0;
 	
 	public static Random random = new Random(RANDOM_SEED);
 
@@ -92,7 +101,9 @@ public class Environment {
 	
 	private void initGenes(){
 		//0 to n-1 for the cities, n to denote the seperator. Superfluous numbers are being ignored
-		bitsPerAllele = (int) (Math.log(travelingSalesman.n)/Math.log(2));
+		// Enough bits to reach every city (the old floor() left the top cities unreachable),
+		// plus EXTRA_BITS so that "% n" below is close to uniform.
+		bitsPerAllele = 32 - Integer.numberOfLeadingZeros(travelingSalesman.n - 1) + EXTRA_BITS;
 		
 		//2n alleles, as we use pair permutations
 		allelesCount = 2*travelingSalesman.n;
@@ -118,13 +129,17 @@ public class Environment {
 		int parent1 = pickGene();
 		int parent2 = pickGene();
 		
-		//index of gene to be replaced
-		int replacedGene = 0;
-		
-		//choose gene to be replaced - preserve parents and fittest gene
-		do{
-			replacedGene = Math.abs(random.nextInt()%genes.length);
-		} while (replacedGene == parent1 || replacedGene == parent2 || replacedGene == fittestGeneIndex);
+		//replace the least fit gene that is not a parent (replacing a random gene gave
+		//almost no selection pressure). The fittest gene is never the least fit one.
+		int replacedGene = -1;
+		for(int i = 0;i<genes.length;i++){
+			if(i == parent1 || i == parent2){
+				continue;
+			}
+			if(replacedGene < 0 || fitnesses[i] < fitnesses[replacedGene]){
+				replacedGene = i;
+			}
+		}
 		
 		//replace old gene with offspring of i1 and i2
 		genes[parent1].createOffspring(genes[parent2], genes[replacedGene]);
@@ -148,25 +163,27 @@ public class Environment {
 	}
 
 	/**
-	 * Picking a gene works like a roulette wheel: a random nummer between 0 and the total population fitness
-	 * is chosen. Then starting from the first index, the fitnesses of the genes are being added up sequentially, 
-	 * until the sum is greater than the chosen number. The index for the last gene is the pick. 
-	 * By this algorithm, the probability for a gene to be picked is proportional to it's fitness.
-	 * 
+	 * Tournament selection: draw TOURNAMENT_SIZE random genes and return the fittest of them.
+	 *
+	 * This replaces fitness-proportional (roulette) selection. With fitness = 1/cost, tours that
+	 * differ in length by a few percent had almost the same chance to be picked, so selection
+	 * pressure was close to zero. Tournament selection only depends on the ranking.
+	 * (The roulette also drew its selector with nextDouble() % fitnessSum, which only covers
+	 * the whole wheel while fitnessSum < 1.)
+	 *
 	 * @return index into the population, pointing to a gene
 	 */
 	private int pickGene() {
-		double selector = Math.abs(random.nextDouble())%fitnessSum;//random number between 0 and fitnessSum
-		
-		int j = 0;
-		
-		double count = fitnesses[j];
-		
-		while(count < selector && j<fitnesses.length-1){
-			count += fitnesses[++j];
+		int best = random.nextInt(genes.length);
+
+		for(int i = 1;i<TOURNAMENT_SIZE;i++){
+			int candidate = random.nextInt(genes.length);
+			if(fitnesses[candidate] > fitnesses[best]){
+				best = candidate;
+			}
 		}
-		
-		return j;
+
+		return best;
 	}
 	
 	private void calculateFitnesses(){
@@ -209,8 +226,10 @@ public class Environment {
 			//differeing strategies to deal with superfluous alleles - modulo n favours some numbers, 
 			//but presumably so would any other scheme
 			int allele = gene.getAllele(i)%travelingSalesman.n;
-			
-			if(i > 0){
+
+			//alleles form disjoint pairs (a0 a1)(a2 a3)...; the old "i > 0" applied an
+			//overlapping chain (a0 a1)(a1 a2)(a2 a3)... instead
+			if(i % 2 == 1){
 				int tmpCity = route[allele];
 				route[allele] = route[lastAllele];
 				route[lastAllele] = tmpCity;
