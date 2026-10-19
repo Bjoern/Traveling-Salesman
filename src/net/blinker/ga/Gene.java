@@ -36,6 +36,9 @@ public class Gene {
 	
 	public void createOffspring(Gene gene2, Gene offspring){
 		int crossoverBit = Math.abs(Environment.random.nextInt()%environment.bitsPerGene);
+		if(Environment.random.nextDouble() >= environment.crossoverRate){
+			crossoverBit = 0;//no crossover: the offspring is a copy of one parent (before mutation)
+		}
 		int crossoverByte = crossoverBit/Byte.SIZE;
 		
 		byte[] firstGene, lastGene;//who provides the first bits?
@@ -82,44 +85,21 @@ public class Gene {
 	}
 	
 	public int getAllele(int index){
+		// Read the allele's bits one at a time, most significant first. The previous
+		// byte-wise version kept the bits of following alleles when an allele ended
+		// inside a byte, and `nextByte >>>= k` sign-extended negative bytes, so most
+		// alleles were decoded wrongly.
 		int allele = 0;
-		
+
 		int firstBitIndex = index*environment.bitsPerAllele;
-		
-		int bitsToGo = environment.bitsPerAllele;
-		
-		int byteIndexInGene = firstBitIndex/Byte.SIZE;
-		int inBitsFromRight = Byte.SIZE-firstBitIndex%Byte.SIZE;
-		
-		allele |= geneData[byteIndexInGene];
-		
-		//remove heading bits
-		
-		allele &= (int)(Math.pow(2, inBitsFromRight))-1;
-		
-		bitsToGo -= inBitsFromRight;
-		
-		byte nextByte = 0;
-		
-		while(bitsToGo > 0){
-			
-			byteIndexInGene++;
-			nextByte = geneData[byteIndexInGene];
-			
-			if(bitsToGo > Byte.SIZE){
-				allele <<=  Byte.SIZE;
-			} else {
-				allele <<= bitsToGo;
-				nextByte >>>= Byte.SIZE-bitsToGo;
-			}
-			
-			allele |= (nextByte & 0xff);
-			
-			bitsToGo -= Byte.SIZE;
+
+		for(int i = firstBitIndex; i < firstBitIndex+environment.bitsPerAllele; i++){
+			int bit = (geneData[i/Byte.SIZE] >> (Byte.SIZE-1-i%Byte.SIZE)) & 1;
+			allele = (allele << 1) | bit;
 		}
-		
+
 		return allele;
-		
+
 	}
 	
 }

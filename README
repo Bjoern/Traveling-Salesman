@@ -9,3 +9,52 @@ I have verified that it works for small n, but have not put much further work in
 I would be delighted to be contacted by anyone who would be interested into looking further into this, or simply for helpful comments. 
 
 This project was originally hosted on Google Code, moved it to Github now to have all my things in one place.
+
+
+Update 2026: bug fixes and an evaluation (by Claude, Anthropic's AI assistant)
+==============================================================================
+
+Claude reviewed the code, fixed four bugs and compared the result with a conventional permutation GA.
+
+Bugs that were fixed
+--------------------
+
+1. Gene.getAllele decoded about 76% of alleles wrongly. When an allele ended inside a byte, the bits of the following alleles were not shifted off, and "nextByte >>>= k" sign-extended negative bytes, so ones were shifted in instead of zeros.
+2. bitsPerAllele was rounded down, so for 10 cities the alleles only covered 0-7 and cities 8 and 9 could not be reached by a correct decoder. It now rounds up and adds 2 extra bits so that "allele % n" is close to uniform.
+3. The decoder applied an overlapping chain of transpositions (a0 a1)(a1 a2)(a2 a3)... instead of the disjoint pairs (a0 a1)(a2 a3)... described above, so every allele took part in two transpositions.
+4. Selection pressure was almost zero: roulette selection on fitness 1/cost gives nearly the same chance to tours that differ by a few percent, and the offspring replaced a random gene. It now uses tournament selection (size 3) and replaces the least fit gene that is not a parent. (The roulette selector, nextDouble() % fitnessSum, also only covered the whole wheel while fitnessSum < 1.)
+
+A crossoverRate field (default 1.0) was added so crossover can be switched off for comparison.
+
+Results
+-------
+
+bench/Bench.java runs the original and the fixed code on the same random city layouts, with 300,000 offspring per run, population 500 and 10 layouts per size. Numbers are the mean % above the optimum (exact for 10 cities, best of 300 local-search restarts for 30 and 60). Lower is better.
+
+                                              10 cities   30 cities   60 cities
+  original code                                  0.2%        102%        257%
+  fixed, with crossover                          0.0%         39%        115%
+  fixed, crossover switched off                  1.6%         36%        114%
+  order crossover + swap mutation (same GA)      0.0%          8%         26%
+  random tours, same number                      0.4%        123%        278%
+
+With 10 cities there are only 181,440 distinct tours, so even random sampling finds the optimum; that is why the original code seemed to work for small n. At 30 and 60 cities the original code was barely better than random sampling. The fixes roughly halve the distance to the optimum, but the fixed GA does just as well with crossover switched off, and a GA with order crossover is three to five times closer.
+
+Why fixing the bugs did not help much
+-------------------------------------
+
+The encoding guarantees that every gene is a legal route, but a GA also needs crossover to pass on what makes the parents good. In the TSP that is which cities are next to each other (the edges of the tour).
+
+A one-point crossover child consists of a prefix of parent A's transpositions followed by a suffix of parent B's. Algebraically, that is parent B's route with its cities renamed by the permutation (A's prefix) * (B's prefix)^-1. The child keeps the "shape" of B but applies it to different cities, so the edges of both parents are mostly lost. Measured with a correct decoder, a crossover child shares only 23% of its edges with its parents for 30 cities (a random tour shares 14%), compared with 80% for order crossover. For 100 cities it is 15% versus 82%.
+
+Mutation, on the other hand, is fairly local: changing one allele changes the route by a small cycle of positions and keeps 82-94% of the edges for 30-100 cities. So the GA effectively works as a mutation-only search, which is why it improves with the bug fixes but gains nothing from crossover.
+
+The same problem affects other encodings that make every gene legal by construction, for example Grefenstette's ordinal representation. Being legal is necessary, but the operators also have to preserve the building blocks of good solutions.
+
+To run the benchmark, compile the original and the fixed sources into two class directories and pass them to bench/Bench.java:
+
+  git worktree add /tmp/orig-src 6f690e5        # the last commit before the fixes
+  javac -d /tmp/orig  $(find /tmp/orig-src/src -name '*.java')
+  javac -d /tmp/fixed $(find src -name '*.java')
+  javac -d /tmp/bench bench/Bench.java
+  java -cp /tmp/bench Bench /tmp/orig /tmp/fixed 10 300000
